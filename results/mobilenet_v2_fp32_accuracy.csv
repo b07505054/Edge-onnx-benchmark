@@ -1,0 +1,2 @@
+model,batch_size,samples,top1_consistency_with_pytorch,consistency_drop
+mobilenet_v2_fp32,1,100,1.0,0.0
