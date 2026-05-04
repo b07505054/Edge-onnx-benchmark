@@ -67,3 +67,8 @@ results/*.json
 
 # misc
 dog.jpg
+
+executorch_build/
+build_cpp/
+*.exe
+*.lib

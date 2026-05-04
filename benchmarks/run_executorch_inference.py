@@ -1,29 +1,68 @@
+import argparse
+import statistics
 import time
-import numpy as np
+from pathlib import Path
+
+import torch
+from executorch.extension.pybindings.portable_lib import _load_for_executorch
 
 
+def percentile(values, p):
+    values = sorted(values)
+    k = (len(values) - 1) * (p / 100)
+    f = int(k)
+    c = min(f + 1, len(values) - 1)
+    if f == c:
+        return values[f]
+    return values[f] + (values[c] - values[f]) * (k - f)
 
-def simulate_inference(input_tensor):
-    start = time.perf_counter()
-    _ = np.dot(input_tensor, input_tensor.T)
-    return (time.perf_counter() - start) * 1000
+
+def run_forward(module, inputs):
+    try:
+        return module.forward(inputs)
+    except Exception:
+        try:
+            return module.run_method("forward", inputs)
+        except Exception:
+            return module(*inputs)
 
 
 def main():
-    runs = 100
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--model-path",
+        default="models/executorch/mv2_xnnpack_fp32.pte",
+    )
+    parser.add_argument("--runs", type=int, default=100)
+    parser.add_argument("--warmup", type=int, default=10)
+    args = parser.parse_args()
 
-    input_tensor = np.random.rand(1, 128).astype(np.float32)
+    model_path = Path(args.model_path)
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model not found: {model_path}")
+
+    print("[INFO] Loading ExecuTorch model...")
+    module = _load_for_executorch(str(model_path))
+
+    # MobileNet input
+    x = torch.randn(1, 3, 224, 224).contiguous()
+
+    print("[INFO] Warmup...")
+    for _ in range(args.warmup):
+        run_forward(module, (x,))
 
     latencies = []
 
-    for _ in range(runs):
-        latency = simulate_inference(input_tensor)
-        latencies.append(latency)
+    print("[INFO] Running inference...")
+    for _ in range(args.runs):
+        start = time.perf_counter()
+        run_forward(module, (x,))
+        latencies.append((time.perf_counter() - start) * 1000)
 
-    print("=== Inference Benchmark (Simulated) ===")
-    print(f"avg: {np.mean(latencies):.4f} ms")
-    print(f"p95: {np.percentile(latencies, 95):.4f} ms")
-    print(f"p99: {np.percentile(latencies, 99):.4f} ms")
+    print("\n=== ExecuTorch Inference ===")
+    print(f"avg: {statistics.mean(latencies):.4f} ms")
+    print(f"p95: {percentile(latencies, 95):.4f} ms")
+    print(f"p99: {percentile(latencies, 99):.4f} ms")
 
 
 if __name__ == "__main__":
