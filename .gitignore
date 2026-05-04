@@ -53,3 +53,17 @@ Thumbs.db
 # =========================
 .vscode/
 .idea/
+
+# profiling artifacts
+onnxruntime_profile__*.json
+
+# benchmark outputs
+results/*.png
+results/*.csv
+results/*.json
+
+# executorch artifacts
+*.pte
+
+# misc
+dog.jpg
