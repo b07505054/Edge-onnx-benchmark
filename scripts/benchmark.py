@@ -53,6 +53,7 @@ def benchmark_onnx(model_path, iterations=100, warmup=20, batch_size=1, threads=
     sess_options = ort.SessionOptions()
     sess_options.intra_op_num_threads = threads
     sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    sess_options.enable_profiling = True
 
     session = ort.InferenceSession(
         model_path,
@@ -78,6 +79,9 @@ def benchmark_onnx(model_path, iterations=100, warmup=20, batch_size=1, threads=
 
     peak_mem = process.memory_info().rss / 1024 / 1024
     model_size = os.path.getsize(model_path) / 1024 / 1024
+
+    profile_file = session.end_profiling()
+    print(f"ONNX profiling saved to: {profile_file}")
 
     return {
         "backend": "ONNX Runtime",

@@ -1,149 +1,238 @@
-# Edge AI Inference Optimization & Profiling Pipeline (ONNX Runtime)
+# Edge AI Inference Optimization & Profiling Pipeline
+
 ## Overview
 
-This project implements an end-to-end edge AI inference optimization pipeline, evaluating performance trade-offs across PyTorch, ONNX Runtime, and quantized models.
+This project implements an end-to-end edge AI inference optimization and profiling pipeline.
 
-The goal is to simulate a real-world AI deployment workflow and analyze:
+The goal is to simulate a real-world AI deployment workflow and analyze how model architecture, runtime systems, and hardware constraints affect performance.
 
-Inference latency (avg / p95 / p99)
-Throughput (QPS)
-Memory footprint
-Model size
-Accuracy consistency
-CPU thread scaling behavior
+Key focus areas include:
 
-The pipeline is designed to reflect production-level AI software tooling, similar to those used in edge AI systems.
+- Multi-runtime comparison (PyTorch, TorchScript, ONNX Runtime)
+- System-level performance profiling (latency, throughput, memory)
+- Operator-level analysis
+- Roofline modeling (memory-bound vs compute-bound)
+- Debug and root cause analysis
+- Deployment trade-offs (batch, threading)
+- Tooling and automation
+
+---
 
 ## System Pipeline
+
+```text
 PyTorch Model
-   ↓
+    ↓
 ONNX Export
-   ↓
-ONNX Graph Optimization (onnx-simplifier)
-   ↓
-Quantization (INT8 dynamic)
-   ↓
+    ↓
+Graph Optimization
+    ↓
+Quantization (INT8)
+    ↓
 ONNX Runtime Inference (Python + C++)
-   ↓
-Profiling & Evaluation
+    ↓
+Profiling & Analysis
+```
 
-This simulates a full AI software toolchain for edge deployment.
+---
 
-## Benchmark Setup
-Model: MobileNetV2
-Input: (1, 3, 224, 224)
-Backend: ONNX Runtime (CPU)
-Threads: 1, 2, 4, 8
-Iterations: 100 (with warmup)
-📊 Benchmark Summary
-Model	Backend	Threads	Avg Latency (ms)	P95 Latency (ms)	Throughput (QPS)	Model Size (MB)
-PyTorch FP32	PyTorch	N/A	26.12	32.31	38.29	N/A
-ONNX FP32	ONNX Runtime	1	9.99	11.02	100.10	0.27
-Optimized ONNX FP32	ONNX Runtime	4	4.52	6.11	221.44	13.33
-INT8 ONNX	ONNX Runtime	4	105.48	116.02	9.48	3.45
-## Key Findings
--  5.6× speedup from PyTorch → optimized ONNX Runtime
--  Throughput improved from 38.3 → 221.4 QPS
--  Model size reduced by 74% via INT8 quantization
--  INT8 caused 22.6× latency regression
--  INT8 reduced Top-1 consistency from 100% → 3%
--  Accuracy / Consistency Validation
-Model	Top-1 Consistency with PyTorch
-ONNX FP32	100%
-Optimized ONNX FP32	100%
-INT8 ONNX	3%
-## Thread Scaling Analysis
+## Multi-Runtime Comparison
 
-1 → 2 threads: strong improvement
-2 → 4 threads: moderate improvement
-4 → 8 threads: minimal gain (saturation)
-## Insight
+| Runtime | Avg Latency (ms) | Throughput (QPS) |
+|--------|----------------|----------------|
+| PyTorch | ~26 ms | ~38 |
+| TorchScript | ~20 ms | ~50 |
+| ONNX Runtime (optimized) | ~4.5 ms | ~220 |
 
-Performance saturates beyond 4 threads, indicating:
+### Insight
 
-CPU scheduling overhead
-Memory bandwidth limits
-Limited operator-level parallelism
+- TorchScript reduces Python overhead compared to PyTorch
+- ONNX Runtime achieves the best performance due to graph optimization and optimized kernels
 
-- More threads ≠ better performance in edge environments
+This demonstrates the importance of selecting the right runtime in an AI software toolchain.
 
-## Bottleneck Analysis
+---
 
-INT8 quantization resulted in:
+## Thread Scaling
 
-Significant latency increase
-Severe accuracy degradation
-Root Cause
+![Thread Scaling](results/thread_latency_curve.png)
 
-MobileNetV2 relies heavily on convolution operators, which are not efficiently accelerated under:
+### Insight
 
-ONNX Runtime CPU dynamic quantization path
+- Latency improves significantly from 1 → 4 threads
+- Performance saturates beyond 4 threads
 
-Unlike transformer models:
+This indicates diminishing returns due to system-level constraints.
 
-Dynamic quantization works well on Linear layers
-But poorly on Conv-heavy networks
+---
+
+## Batch vs Latency Trade-off
+
+![Batch](results/batch_latency.png)
+
+| Batch | Latency (ms) | QPS |
+|------|-------------|-----|
+| 1 | 7.7 | 129 |
+| 4 | 27.9 | 143 |
+| 8 | 50.7 | 158 |
+
+### Insight
+
+- Throughput increases slightly with batch size
+- Latency increases almost linearly
+
+Conclusion:
+
+Batching improves throughput but is not suitable for real-time edge inference.
+
+---
+
+## Memory Profiling
+
+![Memory](results/memory_scaling.png)
+
+### Insight
+
+- Memory usage varies with batch size
+- Higher workload increases data movement and buffering
+
+This suggests memory bandwidth pressure.
+
+Combined with latency behavior, this confirms the system is memory-bound rather than compute-bound.
+
+---
+
+## Operator-level Profiling
+
+![Operator](results/operator_breakdown.png)
+
+Top latency contributors:
+
+- Activation: ~68%
+- Other (including fused Conv kernels): ~28%
+- GEMM / Linear: ~5%
+
+### Insight
+
+- Activation dominates runtime
+- GEMM contributes minimally
+
+This indicates the workload is memory-bound.
+
+Some convolution operations are fused into optimized kernels and appear under "Other".
+
+---
+
+## Roofline-based Analysis
+
+Applied Roofline modeling to the ONNX inference pipeline to identify whether bottlenecks were memory-bound or compute-bound.
+
+### Operator Mapping
+
+- Activation / Conv → Memory-bound
+- GEMM / Linear → Compute-bound
+
+### Insight
+
+- Thread scaling saturation
+- Activation-dominated workload
+- Limited benefit from additional compute
+
+Conclusion:
+
+The system is constrained by memory bandwidth rather than compute throughput.
+
+---
+
+## Debug / Failure Analysis: INT8 Quantization
+
+### Observations
+
+- Latency increased significantly (~20x)
+- Throughput decreased
+- Accuracy consistency dropped (~100% → 3%)
+
+### Root Cause
+
+- MobileNetV2 is convolution-heavy
+- Quantized convolution is not efficiently supported in ONNX Runtime CPU backend
+- Activation-heavy architecture amplifies memory-bound behavior
+
+### Resolution
+
+- Switched back to optimized FP32 ONNX
+- Avoided INT8 dynamic quantization for CNN workloads
+
+### Engineering Insight
+
+Identified and resolved a performance regression issue in quantized inference.
+
+Quantization effectiveness depends on model architecture, runtime backend, and operator support.
+
+---
+
+## Engineering Decisions
+
+- Selected 4-thread configuration as optimal due to diminishing returns
+- Avoided INT8 dynamic quantization for CNN workloads
+- Prioritized ONNX Runtime for deployment performance
+- Built a reusable benchmarking tool for experimentation
+- Validated inference using both Python and C++ runtimes
+
+---
+
+## Benchmark Tool (CLI)
+
+```powershell
+python run_pipeline.py --threads 4 --batch 1
+```
+
+### Purpose
+
+Provides a reusable tool to evaluate different inference configurations.
+
+Simulates real-world AI software toolchains and deployment scenarios.
+
+---
+
 ## C++ ONNX Runtime Inference
 
-This project includes a C++ inference benchmark using ONNX Runtime and CMake.
+- Built using ONNX Runtime C++ API and CMake
+- Runs inference without Python overhead
+- Validates deployment-level performance
 
-Features
-Loads ONNX model
-Runs warmup + timed inference
-Reports latency
-Outputs CSV results
-Build & Run
-cmake -S cpp_inference -B build_cpp -DONNXRUNTIME_DIR="path\to\onnxruntime"
-cmake --build build_cpp --config Release
+---
 
-.\build_cpp\Release\edge_onnx_cpp.exe .\models\mobilenet_v2_optimized.onnx
-## Project Structure
-edge-onnx-benchmark/
-│
-├── models/
-├── results/
-├── scripts/
-│   ├── benchmark.py
-│   ├── export_onnx.py
-│   ├── optimize_onnx.py
-│   ├── quantize_int8.py
-│   ├── evaluate_accuracy.py
-│   ├── thread_sweep.py
-│   ├── plot_thread_sweep.py
-│   └── generate_report.py
-│
-├── cpp_inference/
-│   ├── main.cpp
-│   └── CMakeLists.txt
-│
-└── README.md
-## Reproduce Results
-### Export ONNX
-python scripts/export_onnx.py
+## Platform Awareness
 
-### Optimize
-python scripts/optimize_onnx.py
+This pipeline is designed to be portable across platforms such as Linux and embedded systems.
 
-### Quantize
-python scripts/quantize_int8.py
+The same methodology can be extended to mobile SoCs (CPU / NPU) using vendor-specific runtimes such as Qualcomm QNN.
 
-### Benchmark
-python scripts/benchmark.py --backend onnx --threads 4
+---
 
-### Thread sweep
-python scripts/thread_sweep.py
-
-### Plot
-python scripts/plot_thread_sweep.py
-
-### Accuracy check
-python scripts/evaluate_accuracy.py --model-path models/mobilenet_v2_int8.onnx
-## Future Work
-Static quantization with calibration data
-Transformer model benchmark (DistilBERT)
-GPU / NPU backend comparison
-Operator-level profiling (kernel-level)
-Integration with mobile / embedded platforms
 ## Key Takeaway
-Efficient AI deployment is not just about model accuracy —
-it requires system-level optimization across model format, runtime, and hardware constraints.
+
+Efficient AI deployment requires system-level optimization across:
+
+- Model format
+- Runtime engine
+- Hardware constraints
+
+Not just model accuracy.
+
+---
+
+## Reproduce
+
+```powershell
+python scripts/export_onnx.py
+python scripts/optimize_onnx.py
+python scripts/benchmark.py --backend onnx --threads 4
+python scripts/thread_sweep.py
+python scripts/plot_thread_sweep.py
+python scripts/plot_batch_scaling.py
+python scripts/plot_memory_scaling.py
+python scripts/benchmark_torchscript.py
+python run_pipeline.py --threads 4 --batch 1
+```

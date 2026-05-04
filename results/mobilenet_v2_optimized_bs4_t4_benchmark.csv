@@ -1,0 +1,2 @@
+backend,model_format,batch_size,threads,avg_latency_ms,p50_latency_ms,p95_latency_ms,p99_latency_ms,throughput_qps,memory_mb,model_size_mb
+ONNX Runtime,FP32,4,4,27.883674999466166,27.00705000461312,33.75485499782371,35.54369499906898,143.45311369740827,4.109375,13.32734489440918
