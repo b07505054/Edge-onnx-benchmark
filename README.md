@@ -1,20 +1,24 @@
 # Edge AI Inference Optimization
-## ExecuTorch + ONNX Runtime + TFLite Runtime Systems Analysis
+## ExecuTorch + ONNX Runtime + TensorRT Runtime Systems Analysis
 
-Production-style edge inference evaluation pipeline for analyzing runtime behavior, deployment trade-offs, multi-thread scaling, quantization impact, and hardware-aware inference across modern edge AI runtimes.
+Production-style edge inference evaluation pipeline for analyzing runtime behavior, deployment trade-offs, multi-thread scaling, quantization impact, CUDA execution behavior, TensorRT optimization, and hardware-aware inference across modern AI runtimes.
 
 The project evaluates:
 - ONNX Runtime
+- TensorRT
 - ExecuTorch Python runtime
 - ExecuTorch C++ runtime
-- TFLite XNNPACK delegate
+- TensorFlow Lite XNNPACK delegate
+- Custom CUDA kernels
 
 with a focus on:
 - Runtime systems engineering
+- GPU inference optimization
 - Edge deployment analysis
-- CPU scaling behavior
+- CPU/GPU scaling behavior
 - Quantization trade-offs
-- Performance bottleneck analysis
+- Runtime bottleneck analysis
+- CUDA runtime scheduling
 - Roofline-style systems interpretation
 
 ---
@@ -23,15 +27,17 @@ with a focus on:
 
 ![Edge Inference Architecture](results/edge_inference_architecture.png)
 
-This project evaluates edge inference across ONNX Runtime, ExecuTorch, and TFLite, then analyzes:
+This project evaluates edge inference across ONNX Runtime, TensorRT, ExecuTorch, and TFLite, then analyzes:
 - latency
 - throughput
+- enqueue overhead
+- GPU compute behavior
 - CPU utilization
 - memory footprint
 - quantization behavior
 - runtime bottlenecks
 
-under CPU-based edge deployment environments.
+under CPU and GPU deployment environments.
 
 ---
 
@@ -39,6 +45,9 @@ under CPU-based edge deployment environments.
 
 - Multi-runtime edge inference benchmarking
 - ExecuTorch C++ runtime integration
+- TensorRT FP32 / FP16 / INT8 benchmarking
+- CUDA Graph runtime optimization analysis
+- Custom CUDA kernel implementation
 - XNNPACK backend execution
 - CPU thread-scaling analysis
 - Runtime latency / throughput profiling
@@ -52,13 +61,18 @@ under CPU-based edge deployment environments.
 
 ## Engineering Motivation
 
-Most ML projects stop at model training or inference APIs.
+Most ML projects stop at:
+- model training
+- inference APIs
+- high-level framework usage
 
-This project focuses on the systems layer of edge AI deployment:
+This project focuses on the systems layer of AI deployment:
 - runtime execution
+- GPU kernel behavior
 - hardware-aware inference
 - deployment trade-offs
 - scaling behavior
+- scheduling overhead
 - memory bottlenecks
 - runtime profiling
 
@@ -68,7 +82,7 @@ The goal is to understand how inference systems behave under realistic deploymen
 
 ## Runtime Comparison
 
-This project benchmarks MobileNetV2 across ONNX Runtime, ExecuTorch, and TFLite.
+This project benchmarks MobileNetV2 across ONNX Runtime, TensorRT, ExecuTorch, and TFLite.
 
 ![Runtime Comparison](results/runtime_comparison_final.png)
 
@@ -78,9 +92,169 @@ This project benchmarks MobileNetV2 across ONNX Runtime, ExecuTorch, and TFLite.
 | ExecuTorch Python | Portable / XNNPACK | ~6.00 ms |
 | ExecuTorch C++ | XNNPACK, 4 threads | ~5.70 ms |
 | TFLite | XNNPACK CPU delegate | ~9.69 ms |
+| ONNX Runtime CUDA | CUDA EP | ~3.41 ms |
+| TensorRT FP32 | CUDA | ~2.23 ms |
+| TensorRT FP16 | CUDA | ~1.92 ms |
+| TensorRT INT8 | CUDA | ~1.50 ms |
 
 Key insight:
-ExecuTorch C++ reaches latency comparable to ONNX Runtime when XNNPACK and multi-threading are enabled, while TFLite provides a mobile-oriented runtime baseline.
+TensorRT significantly reduced inference latency relative to CPU runtimes through GPU acceleration and precision-aware execution.
+
+---
+
+## CUDA Kernel Engineering
+
+The project includes custom CUDA kernel implementations for studying:
+- GPU execution behavior
+- thread hierarchy
+- memory hierarchy
+- kernel launch overhead
+- shared-memory optimization
+
+Implemented kernels:
+- CUDA vector addition
+- Naive CUDA matrix multiplication
+- Shared-memory tiled matrix multiplication
+
+---
+
+## CUDA Vector Add Benchmark
+
+### Block Size Sweep
+
+![CUDA Vector Add](results/cuda_vector_add_block_sweep.png)
+
+The experiment evaluates:
+- CUDA block size
+- grid configuration
+- kernel launch efficiency
+- runtime scheduling overhead
+
+Observed behavior suggests:
+- relatively stable execution across block sizes
+- mild degradation at excessively large thread blocks
+- launch overhead dominates simple compute kernels
+
+---
+
+## CUDA Matrix Multiplication
+
+### Naive CUDA MatMul
+
+- GPU latency: ~1.75 ms
+- CPU baseline: ~586 ms
+
+### Shared-Memory Tiled CUDA MatMul
+
+- GPU latency: ~1.07 ms
+- ~1.6× speedup over naive CUDA implementation
+
+Key optimization:
+
+```text
+shared-memory tiling
+```
+
+This reduces:
+- redundant global memory accesses
+- memory bandwidth pressure
+
+while improving:
+- data reuse
+- arithmetic intensity
+
+---
+
+## TensorRT Precision Optimization
+
+The project evaluates TensorRT inference across:
+- FP32
+- FP16
+- INT8
+
+---
+
+## Throughput Comparison
+
+![TensorRT Throughput](results/tensorrt_throughput.png)
+
+Observed throughput:
+- FP32: ~504 qps
+- FP16: ~589 qps
+- INT8: ~758 qps
+
+INT8 achieved:
+- ~50% throughput improvement over FP32
+
+---
+
+## Mean Latency Comparison
+
+![TensorRT Latency](results/tensorrt_latency.png)
+
+Observed latency:
+- FP32: ~2.23 ms
+- FP16: ~1.92 ms
+- INT8: ~1.50 ms
+
+INT8 achieved:
+- ~33% latency reduction relative to FP32
+
+---
+
+## GPU Compute Time
+
+![TensorRT GPU Compute](results/tensorrt_gpu_compute.png)
+
+Observed behavior:
+- reduced GPU compute time with lower precision
+- INT8 produced the lowest compute latency
+
+This demonstrates:
+
+```text
+precision-aware runtime optimization
+```
+
+---
+
+## CUDA Graph Runtime Scheduling Analysis
+
+The project also evaluates:
+
+```text
+TensorRT + CUDA Graph execution
+```
+
+to study:
+- runtime launch overhead
+- enqueue scheduling cost
+- CPU-side dispatch overhead
+
+---
+
+## Enqueue Overhead
+
+![TensorRT Enqueue](results/tensorrt_enqueue.png)
+
+Observed enqueue overhead:
+- INT8 baseline: ~0.86 ms
+- INT8 + CUDA Graph: ~0.06 ms
+
+CUDA Graph reduced enqueue overhead by:
+
+```text
+~93%
+```
+
+This demonstrates:
+- reduced CPU launch overhead
+- graph-captured execution optimization
+- lower runtime dispatch overhead
+
+However:
+- overall latency improvement was limited
+- GPU compute variability and WDDM scheduling jitter remained significant bottlenecks on the laptop GPU environment
 
 ---
 
@@ -139,31 +313,37 @@ This indicates:
 
 ### 4. Runtime Comparison
 
-ONNX Runtime achieved the lowest observed latency under the current Windows CPU setup.
+ONNX Runtime CUDA and TensorRT significantly outperformed CPU-only runtimes under the current GPU environment.
 
-ExecuTorch C++ reached comparable performance using:
+TensorRT further improved latency through:
+- precision lowering
+- runtime optimization
+- CUDA execution optimization
+- graph-level inference acceleration
+
+ExecuTorch C++ reached latency comparable to ONNX Runtime CPU execution using:
 - XNNPACK backend
 - multi-thread execution
-- C++ runtime integration
-
-ExecuTorch Python demonstrated modest runtime overhead relative to the C++ path.
-
-TFLite successfully executed using the XNNPACK CPU delegate, providing a mobile-oriented runtime baseline.
+- native C++ runtime integration
 
 ---
 
 ### 5. Quantization Analysis
 
-Quantization reduced:
-- runtime memory footprint
+INT8 quantization reduced:
+- runtime latency
+- GPU compute time
 - deployment artifact size
 
 However:
-- lower memory usage did not consistently improve latency
+- lower precision alone does not eliminate runtime bottlenecks
+- enqueue scheduling and GPU execution variability still affect end-to-end latency
 
 This highlights deployment trade-offs between:
 - memory efficiency
-- runtime execution overhead
+- runtime scheduling
+- compute throughput
+- hardware utilization
 
 ---
 
@@ -171,17 +351,18 @@ This highlights deployment trade-offs between:
 
 Observed runtime behavior suggests:
 
-- Near-linear scaling from 1 → 4 threads
+- Near-linear scaling from 1 → 4 CPU threads
 - Saturation beyond 4 threads
 - Increasing CPU utilization with thread count
-- Diminishing returns likely caused by:
+- TensorRT enqueue overhead becoming significant at low GPU compute latency
+- CUDA Graph reducing CPU-side dispatch overhead
+- Remaining GPU variability likely caused by:
+  - WDDM scheduling
+  - dynamic clock scaling
+  - synchronization overhead
   - memory bandwidth pressure
-  - scheduling overhead
-  - synchronization cost
 
-Quantization reduced runtime memory footprint, but did not consistently improve latency, highlighting deployment trade-offs between memory efficiency and execution overhead.
-
-These behaviors are consistent with hardware-aware edge inference systems operating near CPU resource limits.
+These behaviors are consistent with hardware-aware inference systems operating near hardware resource limits.
 
 ---
 
@@ -189,23 +370,26 @@ These behaviors are consistent with hardware-aware edge inference systems operat
 
 The observed scaling behavior is consistent with Roofline-style performance analysis:
 
-- Performance improves with increased parallelism in the compute-bound region
-- Beyond 4 threads, scaling efficiency declines
-- This suggests the workload approaches hardware constraints such as:
-  - memory bandwidth limits
+- Performance improves with increased parallelism in compute-bound regions
+- Scaling efficiency declines as workloads approach hardware limits
+- Runtime bottlenecks shift between:
+  - compute throughput
+  - memory bandwidth
   - synchronization overhead
-  - shared-resource contention
+  - runtime dispatch overhead
 
-This aligns with the transition from compute-bound execution toward memory-bound behavior.
+CUDA tiled matrix multiplication improved arithmetic intensity through shared-memory reuse, demonstrating the transition from memory-bound toward more compute-efficient execution.
 
 ---
 
 ## Memory and Deployment Analysis
 
-The project also evaluates:
+The project evaluates:
 - runtime RSS memory usage
 - deployment artifact size
 - model loading overhead
+- quantized deployment size
+- GPU execution overhead
 
 Observed behavior demonstrates:
 
@@ -218,6 +402,8 @@ Runtime memory behavior depends on:
 - runtime buffers
 - intermediate activations
 - operator workspace requirements
+- CUDA runtime buffers
+- execution scheduling behavior
 
 not only serialized model size.
 
@@ -225,49 +411,69 @@ not only serialized model size.
 
 ## Methodology
 
-### Model
+### Models
+
 - MobileNetV2
 
-### Execution Environment
+### Execution Environments
+
 - CPU-only inference
+- CUDA GPU inference
 - Windows execution environment
 - XNNPACK-enabled runtimes
+- TensorRT runtime execution
 
 ### Metrics Collected
+
 - Average latency
 - Tail latency (p95 / p99)
 - Throughput
 - CPU utilization
+- GPU compute time
+- Enqueue overhead
 - Speedup scaling
 - Runtime memory usage
 - Model load latency
 
 ### Benchmarking Controls
-- Fixed number of executions
+
+- Fixed execution counts
 - Warmup handling
 - Thread-count variation
 - Repeated execution runs
+- CUDA synchronization
+- Precision-controlled inference
 
 ---
 
 ## Tech Stack
 
 ### Languages
+
 - Python
 - C++
+- CUDA
 
 ### Inference Runtimes
+
 - ONNX Runtime
+- TensorRT
 - ExecuTorch
-- TFLite
+- TensorFlow Lite
 
 ### Backends
+
+- CUDA Execution Provider
 - XNNPACK
+- TensorRT Runtime
 - CPU Execution Provider
 
 ### Libraries / Tooling
+
 - PyTorch
 - TensorFlow Lite
+- CUDA Toolkit
+- TensorRT
 - Matplotlib
 - NumPy
 
@@ -278,6 +484,7 @@ not only serialized model size.
 ```text
 edge-onnx-benchmark/
 ├── benchmarks/        # benchmarking + plotting scripts
+├── cuda_backend/      # custom CUDA kernels and backend dispatch
 ├── results/           # generated metrics and visualizations
 ├── executorch_export/
 ├── models/
@@ -291,11 +498,15 @@ edge-onnx-benchmark/
 
 This project demonstrates ability to:
 
-- Deploy models across multiple runtimes
-- Work with low-level inference runtimes (C++)
+- Deploy models across multiple inference runtimes
+- Work with low-level inference runtimes (C++ / CUDA)
+- Implement custom GPU kernels
+- Analyze GPU execution behavior
+- Evaluate precision-performance trade-offs
+- Profile runtime scheduling overhead
+- Benchmark TensorRT inference optimization
 - Analyze thread-level scaling behavior
 - Perform runtime bottleneck analysis
-- Benchmark deployment trade-offs
 - Evaluate quantization impact
 - Interpret hardware-aware inference behavior
 - Design reproducible performance engineering workflows
@@ -304,6 +515,11 @@ This project demonstrates ability to:
 
 ## Future Extensions
 
+- CUDA stream overlap analysis
+- TensorRT plugin development
+- Operator fusion experiments
+- Custom execution scheduler
+- CUDA Graph pipeline scheduling
 - Android / embedded deployment
 - Apple Silicon benchmarking
 - TFLite GPU / NPU delegate evaluation
@@ -319,7 +535,9 @@ This project demonstrates ability to:
 ## References
 
 - ONNX Runtime
+- TensorRT
 - ExecuTorch
 - TensorFlow Lite
 - XNNPACK
+- CUDA Toolkit
 - PyTorch
